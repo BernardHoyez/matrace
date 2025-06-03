@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trace GPS PWA</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Plugin IGN -->
+  <link rel="stylesheet" href="https://ignf.github.io/geoportal-extensions/leaflet-latest/dist/GpPluginLeaflet.css" />
+  <script src="https://ignf.github.io/geoportal-extensions/leaflet-latest/dist/GpPluginLeaflet.js" data-key="essentiels"></script>
+
+  <style>
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 0 5px rgba(0,0,0,0.3);
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <p><strong>ℹ️ Conseil :</strong> pour installer cette page comme une application, cliquez sur “Ajouter à l’écran d’accueil”.</p>
+    <button onclick="startRecording()">▶️ Démarrer</button>
+    <button onclick="stopRecording()">⏹️ Arrêter</button>
+    <button onclick="exportGPX()">📄 Export GPX</button>
+    <button onclick="exportKML()">📄 Export KML</button>
+    <button onclick="shareFile()">🔗 Partager</button>
+    <p id="info">Distance : 0 m<br>Durée : 0 min</p>
+  </div>
+  <div id="map"></div>
+
+  <script>
+    let map, watchId, track = [], polyline;
+    let startTime = null;
+
+    const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    });
+
+    const ignLayer = L.geoportalLayer.WMTS({
+      layer: 'GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2'
+    });
+
+    map = L.map('map', {
+      center: [48.85, 2.35],
+      zoom: 13,
+      layers: [osmLayer]
+    });
+
+    const baseLayers = {
+      "OpenStreetMap": osmLayer,
+      "IGN Plan": ignLayer
+    };
+    L.control.layers(baseLayers).addTo(map);
+
+    function startRecording() {
+      if (!navigator.geolocation) {
+        alert("Géolocalisation non disponible.");
+        return;
+      }
+
+      track = [];
+      startTime = Date.now();
+
+      watchId = navigator.geolocation.watchPosition(pos => {
+        const latlng = [pos.coords.latitude, pos.coords.longitude];
+        track.push(latlng);
+
+        if (!polyline) {
+          polyline = L.polyline(track, { color: 'red' }).addTo(map);
+        } else {
+          polyline.setLatLngs(track);
+        }
+
+        map.setView(latlng, 16);
+        updateInfo();
+      }, err => {
+        alert("Erreur GPS : " + err.message);
+      }, {
+        enableHighAccuracy: true,
+        maximumAge: 1000
+      });
+    }
+
+    function stopRecording() {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+      }
+    }
+
+    function updateInfo() {
+      const dist = computeDistance(track).toFixed(0);
+      const duration = ((Date.now() - startTime) / 60000).toFixed(0);
+      document.getElementById('info').textContent = `Distance : ${dist} m\nDurée : ${duration} min`;
+    }
+
+    function computeDistance(coords) {
+      let d = 0;
+      for (let i = 1; i < coords.length; i++) {
+        d += map.distance(coords[i - 1], coords[i]);
+      }
+      return d;
+    }
+
+    function exportGPX() {
+      if (track.length === 0) return;
+      const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Trace GPS PWA" xmlns="http://www.topografix.com/GPX/1/1">
+<trk><name>Trace</name><trkseg>
+${track.map(p => `<trkpt lat="${p[0]}" lon="${p[1]}"></trkpt>`).join('\n')}
+</trkseg></trk>
+</gpx>`;
+      saveFile(gpx, 'trace.gpx', 'application/gpx+xml');
+    }
+
+    function exportKML() {
+      if (track.length === 0) return;
+      const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document><Placemark><LineString><coordinates>
+${track.map(p => `${p[1]},${p[0]},0`).join(' ')}
+</coordinates></LineString></Placemark></Document></kml>`;
+      saveFile(kml, 'trace.kml', 'application/vnd.google-earth.kml+xml');
+    }
+
+    let lastFileBlob = null;
+    function saveFile(content, filename, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      lastFileBlob = blob;
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function shareFile() {
+      if (!lastFileBlob) return alert("Aucun fichier à partager.");
+      if (navigator.canShare && navigator.canShare({ files: [new File([lastFileBlob], "trace.gpx")] })) {
+        const file = new File([lastFileBlob], "trace.gpx");
+        navigator.share({
+          title: "Trace GPS",
+          files: [file]
+        });
+      } else {
+        alert("Partage non supporté sur cet appareil.");
+      }
+    }
+  </script>
+</body>
+</html>
